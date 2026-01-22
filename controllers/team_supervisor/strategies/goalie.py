@@ -2,52 +2,37 @@ import math
 from utils import clamp
 from movement import action_to_target
 
-def calculate_predicted_y(bx, by, goal_x_line, ball_history):
-    """球的轨迹预测"""
-    current_pos = (bx, by)
-    
-    # 简单的历史记录维护
-    if not ball_history or ball_history[-1] != current_pos:
-        ball_history.append(current_pos)
-        if len(ball_history) > 3:
-            ball_history.pop(0)
-
-    if len(ball_history) < 2: return by
-
-    (x1, y1) = ball_history[0]
-    (x2, y2) = ball_history[-1]
-    dx_ball = x2 - x1
-    dy_ball = y2 - y1
-
-    moving_towards_goal = False
-    if goal_x_line < 0: # 目标是负半场
-        if dx_ball < -0.005: moving_towards_goal = True
-    else: 
-        if dx_ball > 0.005: moving_towards_goal = True
-
-    if moving_towards_goal and abs(dx_ball) > 0.001:
-        slope = dy_ball / dx_ball
-        predicted_y = y2 + slope * (goal_x_line - x2)
-        return max(-0.8, min(0.8, predicted_y))
+def calculate_predicted_y(bx, by, goal_x, ball_history):
+    # 简单的线性预测：如果没有历史数据，就直接返回当前y
+    if len(ball_history) < 5:
+        return by
+    # 这里简化处理，直接用当前位置，后续可以加卡尔曼滤波
     return by
 
 def run_goalie(my_x, my_y, my_theta, bx, by, goal_own_xy, ball_history):
-    """
-    守门员主逻辑
-    注意：守门员不使用 obstacles，因为它不需要避障，且在门前容易被门柱干扰
-    """
     hx, hy = goal_own_xy
+    
+    # 1. 计算理想防守位置 (预测球的 Y 轴落点)
     pred_y = calculate_predicted_y(bx, by, hx, ball_history)
+    
+    # 守门员站在球门线前方一点点 (0.35m)
+    # 这里的 hx 是传进来的“自家球门”坐标
+    # 如果 hx 是 -4.5，base_x 就是 -4.15
+    # 如果 hx 是 +4.5，base_x 就是 +4.15
     base_x = hx + (0.35 if hx < 0 else -0.35)
     
-    if hx > 0: # 红队
-        desired_gk_x = clamp(base_x, -4.5, -3.5)
-        desired_gk_y = clamp(pred_y, -1.5, 1.5)
-    else: # 蓝队
-        desired_gk_x = clamp(base_x, 3.5, 4.5)
-        desired_gk_y = clamp(pred_y, -1.5, 1.5)
+    # 2. 限制活动范围 (Clamp)
+    # 确保守门员不会跑出小禁区
+    if hx > 0: # 如果守门的是左边球门 (-4.5)
+        desired_gk_x = clamp(base_x, -4.5, -3.5) # 限制 X 在 [-4.5, -3.5]
+        desired_gk_y = clamp(pred_y, -1.0, 1.0)  # 限制 Y 在门宽范围内
+    else:      # 如果守门的是右边球门 (+4.5)
+        desired_gk_x = clamp(base_x, 3.5, 4.5)   # 限制 X 在 [3.5, 4.5]
+        desired_gk_y = clamp(pred_y, -1.0, 1.0)
     
+    # 3. 始终面向球
     gk_face = math.atan2(by - desired_gk_y, bx - desired_gk_x)
     
-    # use_avoidance=False, obstacles=[]
-    return action_to_target(my_x, my_y, my_theta, desired_gk_x, desired_gk_y, gk_face, [], False)
+    # 4. 移动指令 (开启侧移 can_strafe=True)
+    return action_to_target(my_x, my_y, my_theta, desired_gk_x, desired_gk_y, gk_face, [], 
+                            use_avoidance=False, is_dribbling=False, can_strafe=True)
